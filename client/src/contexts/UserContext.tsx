@@ -1,10 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { database } from '@/lib/firebase';
 import { ref, get, set, update } from 'firebase/database';
-import {
-  getTelegramUser,
-  waitForTelegramEnvironment,
-} from '@/lib/telegram';
+import { getTelegramUser, waitForTelegramEnvironment, getTelegramWebApp } from '@/lib/telegram';
 
 export interface UserData {
   telegramId: number;
@@ -37,6 +34,35 @@ interface UserContextType {
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
+/** Parse user data from Telegram's URL hash fragment (fallback for some clients). */
+function parseUserFromHash(): { id: number; first_name: string; username?: string } | null {
+  try {
+    const hash = window.location.hash.slice(1);
+    const params = new URLSearchParams(hash);
+    const raw = params.get('tgWebAppData');
+    if (!raw) return null;
+    const data = new URLSearchParams(decodeURIComponent(raw));
+    const userStr = data.get('user');
+    if (!userStr) return null;
+    return JSON.parse(decodeURIComponent(userStr));
+  } catch {
+    return null;
+  }
+}
+
+/** Wait up to `ms` for getTelegramUser() to return a user object. */
+async function waitForTelegramUser(ms = 3000) {
+  const step = 200;
+  let elapsed = 0;
+  while (elapsed < ms) {
+    const u = getTelegramUser();
+    if (u) return u;
+    await new Promise((r) => setTimeout(r, step));
+    elapsed += step;
+  }
+  return null;
+}
+
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -46,32 +72,48 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const initializeUser = async () => {
       try {
-        // Wait up to 4 seconds for Telegram SDK to inject window.Telegram.WebApp
+        // 1. Wait for Telegram SDK to be available (up to 4 s)
         const inTelegram = await waitForTelegramEnvironment(4000);
-
         if (!inTelegram) {
           setIsBlocked(true);
           setLoading(false);
           return;
         }
 
-        const telegramUser = getTelegramUser();
-        if (!telegramUser) {
-          // SDK present but no user data — might be an older Telegram version
-          // Try again once after a short delay
-          await new Promise((r) => setTimeout(r, 500));
-          const retryUser = getTelegramUser();
-          if (!retryUser) {
-            setError('Failed to get Telegram user data. Please restart the app.');
-            setLoading(false);
-            return;
+        // 2. Wait for user data (up to 3 s — some clients inject it slightly late)
+        let tgUser = await waitForTelegramUser(3000);
+
+        // 3. Fallback: parse from URL hash (Telegram passes data here in some flows)
+        if (!tgUser) {
+          const hashUser = parseUserFromHash();
+          if (hashUser) {
+            tgUser = { id: hashUser.id, first_name: hashUser.first_name, username: hashUser.username };
           }
         }
 
-        const tgUser = getTelegramUser()!;
+        if (!tgUser) {
+          // 4. Last resort: try reading initData string directly
+          const webApp = getTelegramWebApp();
+          if (webApp?.initData) {
+            try {
+              const params = new URLSearchParams(webApp.initData);
+              const userStr = params.get('user');
+              if (userStr) {
+                const parsed = JSON.parse(userStr);
+                tgUser = parsed;
+              }
+            } catch {}
+          }
+        }
+
+        if (!tgUser) {
+          setError('Could not load your Telegram profile. Please close and re-open the app from the bot menu button.');
+          setLoading(false);
+          return;
+        }
+
         const userId = tgUser.id;
         const userRef = ref(database, `users/${userId}`);
-
         const snapshot = await get(userRef);
 
         if (snapshot.exists()) {
@@ -92,12 +134,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
             referralLink: `https://t.me/SabkaMastiBazaar_Bot?start=ref_${userId}`,
             withdrawalRequests: [],
             transactionHistory: [
-              {
-                type: 'signup_bonus',
-                amount: 100,
-                timestamp: Date.now(),
-                description: 'Welcome bonus',
-              },
+              { type: 'signup_bonus', amount: 100, timestamp: Date.now(), description: 'Welcome bonus' },
             ],
           };
           await set(userRef, newUser);
@@ -120,82 +157,52 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     try {
       const newCoins = user.coins + amount;
       const userRef = ref(database, `users/${user.telegramId}`);
-      await update(userRef, {
-        coins: newCoins,
-        totalEarnings: user.totalEarnings + (amount > 0 ? amount : 0),
-      });
-      setUser((prev) =>
-        prev ? { ...prev, coins: newCoins, totalEarnings: prev.totalEarnings + (amount > 0 ? amount : 0) } : null
-      );
-    } catch (err) {
-      console.error('Error updating coins:', err);
-      throw err;
-    }
+      await update(userRef, { coins: newCoins, totalEarnings: user.totalEarnings + (amount > 0 ? amount : 0) });
+      setUser((p) => p ? { ...p, coins: newCoins, totalEarnings: p.totalEarnings + (amount > 0 ? amount : 0) } : null);
+    } catch (err) { console.error(err); throw err; }
   };
 
   const addTransaction = async (transaction: any) => {
     if (!user) return;
     try {
       const userRef = ref(database, `users/${user.telegramId}`);
-      const newTransactions = [...user.transactionHistory, transaction];
-      await update(userRef, { transactionHistory: newTransactions });
-      setUser((prev) => (prev ? { ...prev, transactionHistory: newTransactions } : null));
-    } catch (err) {
-      console.error('Error adding transaction:', err);
-      throw err;
-    }
+      const newTx = [...user.transactionHistory, transaction];
+      await update(userRef, { transactionHistory: newTx });
+      setUser((p) => p ? { ...p, transactionHistory: newTx } : null);
+    } catch (err) { console.error(err); throw err; }
   };
 
-  const completeTask = async (taskId: string) => {
+  const completeTask = async (_taskId: string) => {
     if (!user) return;
     try {
       const userRef = ref(database, `users/${user.telegramId}`);
       await update(userRef, { tasksCompleted: user.tasksCompleted + 1 });
-      setUser((prev) => (prev ? { ...prev, tasksCompleted: prev.tasksCompleted + 1 } : null));
-    } catch (err) {
-      console.error('Error completing task:', err);
-      throw err;
-    }
+      setUser((p) => p ? { ...p, tasksCompleted: p.tasksCompleted + 1 } : null);
+    } catch (err) { console.error(err); throw err; }
   };
 
-  const addReferral = async (referredUserId: number) => {
+  const addReferral = async (_referredUserId: number) => {
     if (!user) return;
     try {
       const userRef = ref(database, `users/${user.telegramId}`);
       await update(userRef, { referralCount: user.referralCount + 1 });
-      setUser((prev) => (prev ? { ...prev, referralCount: prev.referralCount + 1 } : null));
-    } catch (err) {
-      console.error('Error adding referral:', err);
-      throw err;
-    }
+      setUser((p) => p ? { ...p, referralCount: p.referralCount + 1 } : null);
+    } catch (err) { console.error(err); throw err; }
   };
 
   const requestWithdrawal = async (amount: number, method: string) => {
     if (!user || amount > user.coins) throw new Error('Insufficient balance');
     try {
+      const req = { id: Date.now(), amount, method, status: 'pending', requestedAt: Date.now() };
+      const newReqs = [...user.withdrawalRequests, req];
       const userRef = ref(database, `users/${user.telegramId}`);
-      const newRequest = {
-        id: Date.now(),
-        amount,
-        method,
-        status: 'pending',
-        requestedAt: Date.now(),
-      };
-      const newRequests = [...user.withdrawalRequests, newRequest];
-      await update(userRef, { withdrawalRequests: newRequests, coins: user.coins - amount });
-      setUser((prev) =>
-        prev ? { ...prev, coins: prev.coins - amount, withdrawalRequests: newRequests } : null
-      );
-    } catch (err) {
-      console.error('Error requesting withdrawal:', err);
-      throw err;
-    }
+      await update(userRef, { withdrawalRequests: newReqs, coins: user.coins - amount });
+      setUser((p) => p ? { ...p, coins: p.coins - amount, withdrawalRequests: newReqs } : null);
+    } catch (err) { console.error(err); throw err; }
   };
 
   return (
-    <UserContext.Provider
-      value={{ user, loading, error, isBlocked, updateCoins, addTransaction, completeTask, addReferral, requestWithdrawal }}
-    >
+    <UserContext.Provider value={{ user, loading, error, isBlocked, updateCoins, addTransaction, completeTask, addReferral, requestWithdrawal }}>
       {children}
     </UserContext.Provider>
   );
