@@ -9,7 +9,7 @@ on:
       - main
 
 env:
-  NODE_VERSION: '18'
+  NODE_VERSION: '20'
   FIREBASE_PROJECT_ID: 'earning-testing-2afdb'
 
 jobs:
