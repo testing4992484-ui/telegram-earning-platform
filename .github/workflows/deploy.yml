@@ -125,10 +125,10 @@ jobs:
 
       - name: Deploy to Firebase Hosting
         run: |
-          echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" > /tmp/firebase-key.json
-          firebase deploy --only hosting --project ${{ env.FIREBASE_PROJECT_ID }} --debug
+          echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" > sa.json
+          firebase deploy --only hosting --project ${{ env.FIREBASE_PROJECT_ID }}
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: /tmp/firebase-key.json
+          GOOGLE_APPLICATION_CREDENTIALS: sa.json
 
       - name: Deployment Status
         run: echo "✅ Successfully deployed to Firebase Hosting!"
