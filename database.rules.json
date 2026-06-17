@@ -1,0 +1,98 @@
+{
+  "rules": {
+    "users": {
+      "$uid": {
+        ".read": "$uid === auth.uid || root.child('users').child($uid).child('public').val() === true",
+        ".write": "$uid === auth.uid",
+        ".validate": "newData.hasChildren(['telegramId', 'username', 'firstName', 'coins'])",
+        "telegramId": {
+          ".validate": "newData.isNumber()"
+        },
+        "username": {
+          ".validate": "newData.isString() && newData.val().length > 0"
+        },
+        "firstName": {
+          ".validate": "newData.isString() && newData.val().length > 0"
+        },
+        "coins": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "totalEarnings": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "referralCount": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "tasksCompleted": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "joinDate": {
+          ".validate": "newData.isNumber()"
+        },
+        "lastCheckIn": {
+          ".validate": "newData.isNumber()"
+        },
+        "completedTasks": {
+          ".validate": "newData.isArray()"
+        },
+        "referralLink": {
+          ".validate": "newData.isString()"
+        },
+        "withdrawalRequests": {
+          "$requestId": {
+            ".validate": "newData.hasChildren(['amount', 'method', 'status', 'timestamp'])",
+            "amount": {
+              ".validate": "newData.isNumber() && newData.val() >= 500"
+            },
+            "status": {
+              ".validate": "newData.isString() && newData.val() === 'pending' || newData.val() === 'approved' || newData.val() === 'rejected'"
+            }
+          }
+        },
+        "transactionHistory": {
+          "$txId": {
+            ".validate": "newData.hasChildren(['type', 'amount', 'timestamp'])",
+            "type": {
+              ".validate": "newData.isString()"
+            },
+            "amount": {
+              ".validate": "newData.isNumber()"
+            },
+            "timestamp": {
+              ".validate": "newData.isNumber()"
+            }
+          }
+        }
+      }
+    },
+    "tasks": {
+      ".read": true,
+      "$taskId": {
+        ".validate": "newData.hasChildren(['id', 'title', 'reward', 'type'])",
+        "id": {
+          ".validate": "newData.isString()"
+        },
+        "title": {
+          ".validate": "newData.isString()"
+        },
+        "reward": {
+          ".validate": "newData.isNumber() && newData.val() > 0"
+        },
+        "type": {
+          ".validate": "newData.isString()"
+        }
+      }
+    },
+    "referrals": {
+      "$referrerId": {
+        ".read": "$referrerId === auth.uid",
+        ".write": "$referrerId === auth.uid",
+        "$referredId": {
+          ".validate": "newData.isString()"
+        }
+      }
+    },
+    ".read": false,
+    ".write": false
+  }
+}
