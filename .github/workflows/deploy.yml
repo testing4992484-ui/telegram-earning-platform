@@ -120,13 +120,15 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
           VITE_FIREBASE_MEASUREMENT_ID: ${{ secrets.FIREBASE_MEASUREMENT_ID }}
 
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
       - name: Deploy to Firebase Hosting
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
-          projectId: ${{ env.FIREBASE_PROJECT_ID }}
-          channelId: live
+        run: |
+          echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" > /tmp/firebase-key.json
+          firebase deploy --only hosting --project ${{ env.FIREBASE_PROJECT_ID }} --debug
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/firebase-key.json
 
       - name: Deployment Status
         run: echo "✅ Successfully deployed to Firebase Hosting!"
