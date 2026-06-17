@@ -13,7 +13,7 @@ import TasksPage from "./pages/TasksPage";
 import ReferralPage from "./pages/ReferralPage";
 import WalletPage from "./pages/WalletPage";
 import ProfilePage from "./pages/ProfilePage";
-import { initializeTelegram, isTelegramEnvironment } from "./lib/telegram";
+import { waitForTelegramEnvironment, initializeTelegram } from "./lib/telegram";
 
 function Router() {
   return (
@@ -24,7 +24,6 @@ function Router() {
       <Route path={"/wallet"} component={WalletPage} />
       <Route path={"/profile"} component={ProfilePage} />
       <Route path={"/404"} component={NotFound} />
-      {/* Final fallback route */}
       <Route component={NotFound} />
     </Switch>
   );
@@ -32,27 +31,26 @@ function Router() {
 
 function AppContent() {
   const { loading, isBlocked, error } = useUser();
+  // appReady tracks Telegram SDK initialization — starts false, becomes true once done
   const [appReady, setAppReady] = useState(false);
 
   useEffect(() => {
-    // Initialize Telegram WebApp
-    const webApp = initializeTelegram();
-    if (webApp) {
-      setAppReady(true);
-    }
+    (async () => {
+      // Wait up to 4 s for the Telegram SDK, then initialize regardless
+      await waitForTelegramEnvironment(4000);
+      initializeTelegram(); // safe to call even if null — no-op
+      setAppReady(true);    // always mark ready so loading screen can clear
+    })();
   }, []);
 
-  // Block access if not in Telegram environment
   if (isBlocked) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-blue-50 to-blue-100">
         <div className="text-center px-4">
           <div className="text-6xl mb-4">🚫</div>
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Access Denied</h1>
-          <p className="text-gray-600 mb-6">This app can only be accessed from Telegram</p>
-          <p className="text-sm text-gray-500">
-            Open this link in Telegram to use EarnHub
-          </p>
+          <p className="text-gray-600 mb-4">This app can only be accessed from Telegram</p>
+          <p className="text-sm text-gray-500">Open your bot and tap the menu button to launch EarnHub</p>
         </div>
       </div>
     );
@@ -64,7 +62,8 @@ function AppContent() {
         <div className="text-center px-4">
           <div className="text-6xl mb-4">⚠️</div>
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Error</h1>
-          <p className="text-gray-600">{error}</p>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <p className="text-sm text-gray-500">Close this window and re-open the app from the bot menu button.</p>
         </div>
       </div>
     );
