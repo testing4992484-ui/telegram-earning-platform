@@ -66,8 +66,8 @@ export interface TelegramWebApp {
     hide: () => void;
   };
   HapticFeedback: {
-    impactOccurred: (style: 'light' | 'medium' | 'heavy') => void;
-    notificationOccurred: (type: 'error' | 'success' | 'warning') => void;
+    impactOccurred: (style: "light" | "medium" | "heavy") => void;
+    notificationOccurred: (type: "error" | "success" | "warning") => void;
     selectionChanged: () => void;
   };
   CloudStorage: {
@@ -86,14 +86,52 @@ declare global {
   }
 }
 
-// Check if app is running in Telegram environment
+/**
+ * Check if the URL contains Telegram Mini App launch parameters.
+ * Telegram passes data in the hash fragment: #tgWebAppData=...
+ */
+function hasTelegramHashParams(): boolean {
+  if (typeof window === "undefined") return false;
+  const hash = window.location.hash;
+  return hash.includes("tgWebAppData") || hash.includes("tgWebAppVersion") || hash.includes("tgWebAppPlatform");
+}
+
+/**
+ * Check if running inside Telegram Mini App environment.
+ * Uses multiple signals for robustness:
+ *   1. window.Telegram.WebApp (SDK injected by Telegram native client)
+ *   2. URL hash parameters (passed by Telegram on launch)
+ */
 export function isTelegramEnvironment(): boolean {
-  return typeof window !== 'undefined' && !!window.Telegram?.WebApp;
+  if (typeof window === "undefined") return false;
+  if (window.Telegram?.WebApp) return true;
+  if (hasTelegramHashParams()) return true;
+  return false;
+}
+
+/** Wait up to `timeoutMs` for the Telegram SDK to be ready. */
+export function waitForTelegramEnvironment(timeoutMs = 3000): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (isTelegramEnvironment()) {
+      resolve(true);
+      return;
+    }
+    const start = Date.now();
+    const interval = setInterval(() => {
+      if (isTelegramEnvironment()) {
+        clearInterval(interval);
+        resolve(true);
+      } else if (Date.now() - start >= timeoutMs) {
+        clearInterval(interval);
+        resolve(false);
+      }
+    }, 100);
+  });
 }
 
 // Get Telegram WebApp instance
 export function getTelegramWebApp(): TelegramWebApp | null {
-  if (typeof window === 'undefined') return null;
+  if (typeof window === "undefined") return null;
   return window.Telegram?.WebApp || null;
 }
 
@@ -102,15 +140,11 @@ export function initializeTelegram(): TelegramWebApp | null {
   const webApp = getTelegramWebApp();
   if (!webApp) return null;
 
-  // Notify Telegram that the app is ready
   webApp.ready();
-
-  // Expand the app to full height
   webApp.expand();
 
-  // Set color scheme
-  webApp.setBackgroundColor('#e3f2fd'); // Light blue background
-  webApp.setHeaderColor('#1e88e5'); // Darker blue header
+  try { webApp.setBackgroundColor("#e3f2fd"); } catch {}
+  try { webApp.setHeaderColor("#1e88e5"); } catch {}
 
   return webApp;
 }
@@ -119,7 +153,6 @@ export function initializeTelegram(): TelegramWebApp | null {
 export function getTelegramUser(): TelegramUser | null {
   const webApp = getTelegramWebApp();
   if (!webApp) return null;
-
   return webApp.initDataUnsafe?.user || null;
 }
 
@@ -129,7 +162,7 @@ export function getTelegramUserId(): number | null {
   return user?.id || null;
 }
 
-// Get user's username
+// Get user's Telegram username
 export function getTelegramUsername(): string | null {
   const user = getTelegramUser();
   return user?.username || null;
@@ -138,91 +171,12 @@ export function getTelegramUsername(): string | null {
 // Get user's full name
 export function getTelegramFullName(): string {
   const user = getTelegramUser();
-  if (!user) return '';
-  
-  const firstName = user.first_name || '';
-  const lastName = user.last_name || '';
-  return `${firstName} ${lastName}`.trim();
+  if (!user) return "User";
+  return user.last_name ? `${user.first_name} ${user.last_name}` : user.first_name;
 }
 
-// Get user's first name
-export function getTelegramFirstName(): string {
-  const user = getTelegramUser();
-  return user?.first_name || '';
-}
-
-// Get user's photo URL
+// Get user's profile photo URL
 export function getTelegramPhotoUrl(): string | null {
   const user = getTelegramUser();
   return user?.photo_url || null;
-}
-
-// Get init data for backend verification
-export function getTelegramInitData(): string {
-  const webApp = getTelegramWebApp();
-  return webApp?.initData || '';
-}
-
-// Show alert in Telegram
-export function showTelegramAlert(message: string): void {
-  const webApp = getTelegramWebApp();
-  if (webApp) {
-    webApp.showAlert(message);
-  }
-}
-
-// Show confirm dialog in Telegram
-export function showTelegramConfirm(
-  message: string,
-  callback?: (confirmed: boolean) => void
-): void {
-  const webApp = getTelegramWebApp();
-  if (webApp) {
-    webApp.showConfirm(message, callback);
-  }
-}
-
-// Trigger haptic feedback
-export function triggerHapticFeedback(
-  type: 'light' | 'medium' | 'heavy' | 'success' | 'error' | 'warning'
-): void {
-  const webApp = getTelegramWebApp();
-  if (!webApp?.HapticFeedback) return;
-
-  if (type === 'light' || type === 'medium' || type === 'heavy') {
-    webApp.HapticFeedback.impactOccurred(type);
-  } else if (type === 'success' || type === 'error' || type === 'warning') {
-    webApp.HapticFeedback.notificationOccurred(type);
-  }
-}
-
-// Copy text to clipboard
-export function copyToClipboard(text: string): void {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(text);
-  } else {
-    // Fallback for older browsers
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand('copy');
-    document.body.removeChild(textarea);
-  }
-}
-
-// Open link in Telegram
-export function openTelegramLink(url: string): void {
-  const webApp = getTelegramWebApp();
-  if (webApp) {
-    webApp.openLink(url);
-  } else {
-    window.open(url, '_blank');
-  }
-}
-
-// Get Telegram init data hash for backend verification
-export function getTelegramHash(): string | undefined {
-  const webApp = getTelegramWebApp();
-  return webApp?.initDataUnsafe?.hash;
 }
