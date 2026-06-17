@@ -1,5 +1,4 @@
 // Telegram Mini App SDK Integration
-// This module handles Telegram WebApp initialization and user data extraction
 
 export interface TelegramUser {
   id: number;
@@ -28,7 +27,7 @@ export interface TelegramWebApp {
   openLink: (url: string, options?: { try_instant_view?: boolean }) => void;
   openTelegramLink: (url: string) => void;
   showPopup: (params: any) => void;
-  showAlert: (message: string) => void;
+  showAlert: (message: string, callback?: () => void) => void;
   showConfirm: (message: string, callback?: (confirmed: boolean) => void) => void;
   showScanQrPopup: (params: any) => void;
   closeScanQrPopup: () => void;
@@ -66,8 +65,8 @@ export interface TelegramWebApp {
     hide: () => void;
   };
   HapticFeedback: {
-    impactOccurred: (style: "light" | "medium" | "heavy") => void;
-    notificationOccurred: (type: "error" | "success" | "warning") => void;
+    impactOccurred: (style: 'light' | 'medium' | 'heavy') => void;
+    notificationOccurred: (type: 'error' | 'success' | 'warning') => void;
     selectionChanged: () => void;
   };
   CloudStorage: {
@@ -86,97 +85,149 @@ declare global {
   }
 }
 
-/**
- * Check if the URL contains Telegram Mini App launch parameters.
- * Telegram passes data in the hash fragment: #tgWebAppData=...
- */
+// ─── Environment detection ────────────────────────────────────────────────────
+
 function hasTelegramHashParams(): boolean {
-  if (typeof window === "undefined") return false;
+  if (typeof window === 'undefined') return false;
   const hash = window.location.hash;
-  return hash.includes("tgWebAppData") || hash.includes("tgWebAppVersion") || hash.includes("tgWebAppPlatform");
+  return (
+    hash.includes('tgWebAppData') ||
+    hash.includes('tgWebAppVersion') ||
+    hash.includes('tgWebAppPlatform')
+  );
 }
 
-/**
- * Check if running inside Telegram Mini App environment.
- * Uses multiple signals for robustness:
- *   1. window.Telegram.WebApp (SDK injected by Telegram native client)
- *   2. URL hash parameters (passed by Telegram on launch)
- */
+/** Returns true when running inside Telegram Mini App WebView. */
 export function isTelegramEnvironment(): boolean {
-  if (typeof window === "undefined") return false;
+  if (typeof window === 'undefined') return false;
   if (window.Telegram?.WebApp) return true;
   if (hasTelegramHashParams()) return true;
   return false;
 }
 
-/** Wait up to `timeoutMs` for the Telegram SDK to be ready. */
-export function waitForTelegramEnvironment(timeoutMs = 3000): Promise<boolean> {
+/** Wait up to `timeoutMs` ms for Telegram SDK to inject window.Telegram.WebApp. */
+export function waitForTelegramEnvironment(timeoutMs = 4000): Promise<boolean> {
   return new Promise((resolve) => {
-    if (isTelegramEnvironment()) {
-      resolve(true);
-      return;
-    }
+    if (isTelegramEnvironment()) { resolve(true); return; }
     const start = Date.now();
-    const interval = setInterval(() => {
-      if (isTelegramEnvironment()) {
-        clearInterval(interval);
-        resolve(true);
-      } else if (Date.now() - start >= timeoutMs) {
-        clearInterval(interval);
-        resolve(false);
-      }
+    const id = setInterval(() => {
+      if (isTelegramEnvironment()) { clearInterval(id); resolve(true); }
+      else if (Date.now() - start >= timeoutMs) { clearInterval(id); resolve(false); }
     }, 100);
   });
 }
 
-// Get Telegram WebApp instance
+// ─── Core helpers ─────────────────────────────────────────────────────────────
+
 export function getTelegramWebApp(): TelegramWebApp | null {
-  if (typeof window === "undefined") return null;
+  if (typeof window === 'undefined') return null;
   return window.Telegram?.WebApp || null;
 }
 
-// Initialize Telegram WebApp
 export function initializeTelegram(): TelegramWebApp | null {
   const webApp = getTelegramWebApp();
   if (!webApp) return null;
-
   webApp.ready();
   webApp.expand();
-
-  try { webApp.setBackgroundColor("#e3f2fd"); } catch {}
-  try { webApp.setHeaderColor("#1e88e5"); } catch {}
-
+  try { webApp.setBackgroundColor('#e3f2fd'); } catch {}
+  try { webApp.setHeaderColor('#1e88e5'); } catch {}
   return webApp;
 }
 
-// Get current Telegram user
 export function getTelegramUser(): TelegramUser | null {
   const webApp = getTelegramWebApp();
   if (!webApp) return null;
   return webApp.initDataUnsafe?.user || null;
 }
 
-// Get user's Telegram ID
 export function getTelegramUserId(): number | null {
-  const user = getTelegramUser();
-  return user?.id || null;
+  return getTelegramUser()?.id || null;
 }
 
-// Get user's Telegram username
 export function getTelegramUsername(): string | null {
-  const user = getTelegramUser();
-  return user?.username || null;
+  return getTelegramUser()?.username || null;
 }
 
-// Get user's full name
 export function getTelegramFullName(): string {
   const user = getTelegramUser();
-  if (!user) return "User";
+  if (!user) return 'User';
   return user.last_name ? `${user.first_name} ${user.last_name}` : user.first_name;
 }
 
-// Get user's profile photo URL
 export function getTelegramPhotoUrl(): string | null {
-  const user = getTelegramUser();
-  return user?.photo_url || null;
+  return getTelegramUser()?.photo_url || null;
+}
+
+// ─── Haptic feedback ──────────────────────────────────────────────────────────
+
+export function triggerHapticFeedback(
+  type: 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error' | 'selection' = 'light'
+): void {
+  const webApp = getTelegramWebApp();
+  if (!webApp?.HapticFeedback) return;
+  try {
+    if (type === 'selection') {
+      webApp.HapticFeedback.selectionChanged();
+    } else if (type === 'success' || type === 'warning' || type === 'error') {
+      webApp.HapticFeedback.notificationOccurred(type);
+    } else {
+      webApp.HapticFeedback.impactOccurred(type);
+    }
+  } catch {}
+}
+
+// ─── Navigation ───────────────────────────────────────────────────────────────
+
+export function openTelegramLink(url: string): void {
+  const webApp = getTelegramWebApp();
+  if (webApp) {
+    try { webApp.openTelegramLink(url); return; } catch {}
+    try { webApp.openLink(url); return; } catch {}
+  }
+  window.open(url, '_blank');
+}
+
+export function openExternalLink(url: string): void {
+  const webApp = getTelegramWebApp();
+  if (webApp) {
+    try { webApp.openLink(url); return; } catch {}
+  }
+  window.open(url, '_blank');
+}
+
+// ─── Alerts / dialogs ─────────────────────────────────────────────────────────
+
+export function showTelegramAlert(message: string): Promise<void> {
+  return new Promise((resolve) => {
+    const webApp = getTelegramWebApp();
+    if (webApp) {
+      try { webApp.showAlert(message, resolve); return; } catch {}
+    }
+    alert(message);
+    resolve();
+  });
+}
+
+// ─── Clipboard ────────────────────────────────────────────────────────────────
+
+export async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // Fallback for older browsers / Telegram WebView
+    try {
+      const el = document.createElement('textarea');
+      el.value = text;
+      el.style.position = 'fixed';
+      el.style.opacity = '0';
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
