@@ -3,11 +3,7 @@ import { database } from '@/lib/firebase';
 import { ref, get, set, update } from 'firebase/database';
 import {
   getTelegramUser,
-  getTelegramUserId,
-  getTelegramUsername,
-  getTelegramFullName,
-  getTelegramPhotoUrl,
-  isTelegramEnvironment,
+  waitForTelegramEnvironment,
 } from '@/lib/telegram';
 
 export interface UserData {
@@ -47,50 +43,53 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [isBlocked, setIsBlocked] = useState(false);
 
-  // Initialize user from Telegram
   useEffect(() => {
     const initializeUser = async () => {
       try {
-        // Check if running in Telegram environment
-        if (!isTelegramEnvironment()) {
+        // Wait up to 4 seconds for Telegram SDK to inject window.Telegram.WebApp
+        const inTelegram = await waitForTelegramEnvironment(4000);
+
+        if (!inTelegram) {
           setIsBlocked(true);
-          setError('This app can only be accessed from Telegram');
           setLoading(false);
           return;
         }
 
         const telegramUser = getTelegramUser();
         if (!telegramUser) {
-          setError('Failed to get Telegram user data');
-          setLoading(false);
-          return;
+          // SDK present but no user data — might be an older Telegram version
+          // Try again once after a short delay
+          await new Promise((r) => setTimeout(r, 500));
+          const retryUser = getTelegramUser();
+          if (!retryUser) {
+            setError('Failed to get Telegram user data. Please restart the app.');
+            setLoading(false);
+            return;
+          }
         }
 
-        const userId = telegramUser.id;
+        const tgUser = getTelegramUser()!;
+        const userId = tgUser.id;
         const userRef = ref(database, `users/${userId}`);
 
-        // Check if user exists in Firebase
         const snapshot = await get(userRef);
 
         if (snapshot.exists()) {
-          // User exists, load data
-          const userData = snapshot.val();
-          setUser(userData);
+          setUser(snapshot.val());
         } else {
-          // Create new user
           const newUser: UserData = {
             telegramId: userId,
-            username: telegramUser.username || null,
-            firstName: telegramUser.first_name,
-            lastName: telegramUser.last_name || null,
-            photoUrl: telegramUser.photo_url || null,
-            coins: 100, // Starting bonus
+            username: tgUser.username || null,
+            firstName: tgUser.first_name,
+            lastName: tgUser.last_name || null,
+            photoUrl: tgUser.photo_url || null,
+            coins: 100,
             totalEarnings: 100,
             referralCount: 0,
             tasksCompleted: 0,
             joinDate: Date.now(),
             lastCheckIn: null,
-            referralLink: `https://t.me/YourBotUsername?start=ref_${userId}`,
+            referralLink: `https://t.me/SabkaMastiBazaar_Bot?start=ref_${userId}`,
             withdrawalRequests: [],
             transactionHistory: [
               {
@@ -101,7 +100,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
               },
             ],
           };
-
           await set(userRef, newUser);
           setUser(newUser);
         }
@@ -119,24 +117,15 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const updateCoins = async (amount: number) => {
     if (!user) return;
-
     try {
       const newCoins = user.coins + amount;
       const userRef = ref(database, `users/${user.telegramId}`);
-
       await update(userRef, {
         coins: newCoins,
         totalEarnings: user.totalEarnings + (amount > 0 ? amount : 0),
       });
-
       setUser((prev) =>
-        prev
-          ? {
-              ...prev,
-              coins: newCoins,
-              totalEarnings: prev.totalEarnings + (amount > 0 ? amount : 0),
-            }
-          : null
+        prev ? { ...prev, coins: newCoins, totalEarnings: prev.totalEarnings + (amount > 0 ? amount : 0) } : null
       );
     } catch (err) {
       console.error('Error updating coins:', err);
@@ -146,23 +135,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const addTransaction = async (transaction: any) => {
     if (!user) return;
-
     try {
       const userRef = ref(database, `users/${user.telegramId}`);
       const newTransactions = [...user.transactionHistory, transaction];
-
-      await update(userRef, {
-        transactionHistory: newTransactions,
-      });
-
-      setUser((prev) =>
-        prev
-          ? {
-              ...prev,
-              transactionHistory: newTransactions,
-            }
-          : null
-      );
+      await update(userRef, { transactionHistory: newTransactions });
+      setUser((prev) => (prev ? { ...prev, transactionHistory: newTransactions } : null));
     } catch (err) {
       console.error('Error adding transaction:', err);
       throw err;
@@ -171,22 +148,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const completeTask = async (taskId: string) => {
     if (!user) return;
-
     try {
       const userRef = ref(database, `users/${user.telegramId}`);
-
-      await update(userRef, {
-        tasksCompleted: user.tasksCompleted + 1,
-      });
-
-      setUser((prev) =>
-        prev
-          ? {
-              ...prev,
-              tasksCompleted: prev.tasksCompleted + 1,
-            }
-          : null
-      );
+      await update(userRef, { tasksCompleted: user.tasksCompleted + 1 });
+      setUser((prev) => (prev ? { ...prev, tasksCompleted: prev.tasksCompleted + 1 } : null));
     } catch (err) {
       console.error('Error completing task:', err);
       throw err;
@@ -195,22 +160,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const addReferral = async (referredUserId: number) => {
     if (!user) return;
-
     try {
       const userRef = ref(database, `users/${user.telegramId}`);
-
-      await update(userRef, {
-        referralCount: user.referralCount + 1,
-      });
-
-      setUser((prev) =>
-        prev
-          ? {
-              ...prev,
-              referralCount: prev.referralCount + 1,
-            }
-          : null
-      );
+      await update(userRef, { referralCount: user.referralCount + 1 });
+      setUser((prev) => (prev ? { ...prev, referralCount: prev.referralCount + 1 } : null));
     } catch (err) {
       console.error('Error adding referral:', err);
       throw err;
@@ -218,10 +171,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   };
 
   const requestWithdrawal = async (amount: number, method: string) => {
-    if (!user || amount > user.coins) {
-      throw new Error('Insufficient balance');
-    }
-
+    if (!user || amount > user.coins) throw new Error('Insufficient balance');
     try {
       const userRef = ref(database, `users/${user.telegramId}`);
       const newRequest = {
@@ -231,22 +181,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         status: 'pending',
         requestedAt: Date.now(),
       };
-
       const newRequests = [...user.withdrawalRequests, newRequest];
-
-      await update(userRef, {
-        withdrawalRequests: newRequests,
-        coins: user.coins - amount,
-      });
-
+      await update(userRef, { withdrawalRequests: newRequests, coins: user.coins - amount });
       setUser((prev) =>
-        prev
-          ? {
-              ...prev,
-              coins: prev.coins - amount,
-              withdrawalRequests: newRequests,
-            }
-          : null
+        prev ? { ...prev, coins: prev.coins - amount, withdrawalRequests: newRequests } : null
       );
     } catch (err) {
       console.error('Error requesting withdrawal:', err);
@@ -256,17 +194,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <UserContext.Provider
-      value={{
-        user,
-        loading,
-        error,
-        isBlocked,
-        updateCoins,
-        addTransaction,
-        completeTask,
-        addReferral,
-        requestWithdrawal,
-      }}
+      value={{ user, loading, error, isBlocked, updateCoins, addTransaction, completeTask, addReferral, requestWithdrawal }}
     >
       {children}
     </UserContext.Provider>
@@ -275,8 +203,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
 export function useUser() {
   const context = useContext(UserContext);
-  if (!context) {
-    throw new Error('useUser must be used within UserProvider');
-  }
+  if (!context) throw new Error('useUser must be used within UserProvider');
   return context;
 }
